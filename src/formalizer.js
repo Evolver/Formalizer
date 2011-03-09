@@ -1,3 +1,10 @@
+/**
+ * Author: Dmitry Stepanov <dmitrij@stepanov.lv>
+ * URL: http://www.stepanov.lv
+ *
+ * Released under terms of GNU GPL v2.
+ * http://www.gnu.org/licenses/gpl-2.0.html
+ */
 
 (function( api, $){
 
