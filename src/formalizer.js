@@ -222,29 +222,26 @@ var Form =api.Form =Class( Formalizer, undefined, function( proto, parent) {
 			// reference element
 			var el =this.elem.elements[ i];
 			
-			if( el.type =='INPUT') {
+			// flag: is input focusable?
+			var inputFocusable =false;
+			
+			if( el.nodeName =='INPUT') {
 				
-				if( el.type =='hidden') {
-					// skip hidden inputs
-					continue;
-					
-				} else if( el.type =='button') {
-					// skip buttons
-					continue;
-					
-				} else if( el.type =='submit') {
-					// skip submit buttons
-					continue;
-					
-				} else if( el.type =='reset') {
-					// skip reset buttons
-					continue;
+				if( el.type =='text' || el.type =='password') {
+					// input is focusable
+					inputFocusable =true;
 				}
+				
+			} else if( el.nodeName =='TEXTAREA') {
+				// focusable
+				inputFocusable =true;
 			}
 			
-			// focus element
-			el.focus();
-			break;
+			if( inputFocusable) {
+				// set focus to input
+				el.focus();
+				break;
+			}
 		}
 	};
 	
@@ -295,6 +292,36 @@ var Form =api.Form =Class( Formalizer, undefined, function( proto, parent) {
 			// redraw
 			Redraw( this.elem);
 		}
+	};
+	
+	// get first invalid input
+	proto.getFirstInvalidInput =function() {
+		
+		if( this.invalidInputs.length ==0) {
+			// no invalid inputs available
+			return undefined;
+		}
+		
+		// return first input
+		return this.invalidInputs[ 0];
+	};
+	
+	// get focus on first invalid input
+	proto.focusFirstInvalidInput =function() {
+		
+		// get first invalid input
+		var input =this.getFirstInvalidInput();
+		
+		if( input ===undefined) {
+			// no input to put focus at
+			return false;
+		}
+
+		// focus on input
+		input.focus();
+		
+		// focused
+		return true;
 	};
 	
 	// checks if form's input is changed since last reset.
@@ -366,12 +393,16 @@ var Input =api.Input =Class( Formalizer, function() {
 	proto.eventProxy =undefined;
 	
 	// list of additional filters for current element.
-	// NOTE: initialied in attach() method.
+	// NOTE: initialized in attach() method.
 	proto.filters =undefined;
 	
 	// list of additional validators for current element.
-	// NOTE: initialied in attach() method.
+	// NOTE: initialized in attach() method.
 	proto.validators =undefined;
+	
+	// error message to display when validation error is detected.
+	// NOTE: initialized in attach() method.
+	proto.errorMessage =undefined;
 	
 	// attach to an element (redefinition)
 	proto.attach =function( elem) {
@@ -379,6 +410,59 @@ var Input =api.Input =Class( Formalizer, function() {
 		if( !parent.attach.call( this, elem)) {
 			// attach function is not available
 			return false;
+		}
+		
+		// load error message
+		this.errorMessage =GetAttributeValue( this.elem, 'data-errorMessage');
+		
+		// create validator array
+		this.validators =[];
+		
+		// create filter array
+		this.filters =[];
+		
+		// load list of filters to apply to input by default
+		var filterList =GetAttributeValue( this.elem, 'data-filters');
+		
+		if( filterList !==undefined && filterList !='') {
+			// extract list of filters
+			filterList =filterList.split( ',');
+			
+			// load filter list
+			for( var i =0; i < filterList.length; ++i) {
+				// reference callback
+				var callback =api.inputFilters[ filterList[ i]];
+				
+				if( callback ===undefined) {
+					// target callback is not defined, skip it's loading
+					continue;
+				}
+				
+				// add callback to filter list
+				this.filters.push( callback);
+			}
+		}
+		
+		// load list of validators to apply to input by default
+		var validatorList =GetAttributeValue( this.elem, 'data-validators');
+		
+		if( validatorList !==undefined && validatorList !='') {
+			// extract list of validators
+			validatorList =validatorList.split( ',');
+			
+			// load validator list
+			for( var i =0; i < validatorList.length; ++i) {
+				// reference callback
+				var callback =api.inputValidators[ validatorList[ i]];
+				
+				if( callback ===undefined) {
+					// target callback is not defined, skip it's loading
+					continue;
+				}
+				
+				// add callback to validator list
+				this.validators.push( callback);
+			}
 		}
 		
 		// create event proxy container object
@@ -406,12 +490,6 @@ var Input =api.Input =Class( Formalizer, function() {
 				TriggerEventHandlers( this.$elem, 'change');
 			}
 		}, undefined, this);
-		
-		// create validator array
-		this.validators =[];
-		
-		// create filter array
-		this.filters =[];
 
 		// attached
 		return true;
@@ -919,8 +997,16 @@ var TextInput =api.TextInput =Class( Input, function() {
 				// submit form whenever enter key is pressed
 				
 				if( this.elem.form !==null) {
-					// submit form
-					$(this.elem.form).submit();
+					// form is associated to input
+
+					// blur element
+					this.elem.blur();
+					
+					ExecuteDelayed( function(){
+						// submit form
+						$(this.elem.form).submit();
+						
+					}, undefined, this);
 				}
 				
 				// prevent default action
@@ -1032,11 +1118,6 @@ var TextInput =api.TextInput =Class( Input, function() {
 	// check whether input is valid.
 	proto.isValid =function() {
 		
-		if( !parent.isValid.call( this)) {
-			// not valid according to parent method
-			return false;
-		}
-		
 		if( this.maxLength !==undefined && this.elem.value.length > this.maxLength) {
 			// too long
 			return false;
@@ -1049,6 +1130,11 @@ var TextInput =api.TextInput =Class( Input, function() {
 		
 		if( this.regexp !==undefined && !this.regexp.test( this.elem.value)) {
 			// invalid
+			return false;
+		}
+		
+		if( !parent.isValid.call( this)) {
+			// not valid according to parent method
 			return false;
 		}
 		
@@ -1160,18 +1246,21 @@ var TextInput =api.TextInput =Class( Input, function() {
 		// reference element's value
 		var value =this.elem.value;
 		
+		// determine if change event needs to be triggered
+		var valueChanged =false;
+		
 		if( this.maxLength !==undefined && this.elem.value.length > this.maxLength) {
 			// too long, cut the string
 			value =this.elem.value.substr( 0, this.maxLength);
+			
+			// value changed
+			valueChanged =true;
 		}
 		
-		// determine if change event needs to be triggered
-		var triggerChange =(this.elem.value !=value);
+		if( valueChanged) {
+			// assign new value
+			this.elem.value =value;
 		
-		// assign new value
-		this.elem.value =value;
-		
-		if( triggerChange) {
 			// trigger change event
 			TriggerEventHandlers( this.$elem, 'change');
 		}
@@ -1299,7 +1388,13 @@ var SelectInput =api.SelectInput =Class( Input, function(){
 		return false;
 	};
 	
-}); 
+});
+
+// input filter container object
+api.inputFilters ={};
+
+// input validator container object
+api.inputValidators ={};
 
 // transfers values from one object to another
 function Inherit( from, to) {
